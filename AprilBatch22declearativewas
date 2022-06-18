@@ -1,0 +1,105 @@
+pipeline
+{
+
+agent any
+
+tools{
+maven "Maven3.8.4"
+}
+
+triggers {
+  pollSCM '* * * * * '
+}
+
+options {
+//Dischard old bills
+  buildDiscarder logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '5', numToKeepStr: '5')
+//Adding the time stamps to consel output
+  timestamps()
+}
+
+stages{
+
+//Checkout Code Stage
+stage('CheckOutCode')
+{
+steps{
+ sendslacknotification('STARTED')
+git branch: 'development', credentialsId: 'f4a0e340-137a-4f99-8142-1e681466f88b', url: 'https://github.com/NanjeWood/maven-web-application.git'
+}
+}
+
+//Build Stage
+stage('Build')
+{
+steps{
+sh "mvn clean package"
+}
+}
+
+//Execute SonarQube Report
+stage('ExecuteSonarQubeReport')
+{
+steps{
+sh "mvn sonar:sonar"
+}
+}
+
+//Upload artifactsinto Artifactory repo
+stage('UploadIntoNexus')
+{
+steps{
+sh "mvn deploy"
+}
+}
+
+stage('DeployApplicationIntoTomcatServer')
+{
+steps{
+sshagent(['fb131f76-329a-4944-a20f-91c62e041f7b'])  {
+ sh "scp -o StrictHostKeyChecking=no target/maven-web-application.war ec2-user@172.31.27.131:/opt/apache-tomcat-9.0.63/webapps"
+}
+}
+}
+
+}//Stage closing
+
+post {
+  success {
+sendslacknotification('SUCCESS')
+  }
+  failure {
+sendslacknotification('FAILURE')
+  }
+}
+
+
+}//Pipeline Closing
+
+def sendslacknotification(String buildStatus = 'STARTED') {
+  // build status of null means successful
+  buildStatus =  buildStatus ?: 'SUCCESSFUL'
+
+  // Default values
+  def colorName = 'RED'
+  def colorCode = '#FF0000'
+  def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+  def summary = "${subject} (${env.BUILD_URL})"
+
+  // Override default values based on build status
+  if (buildStatus == 'STARTED') {
+    color = 'YELLOW'
+    colorCode = '#FFFF00'
+  } else if (buildStatus == 'SUCCESSFUL') {
+    color = 'GREEN'
+    colorCode = '#00FF00'
+  } else {
+    color = 'RED'
+    colorCode = '#FF0000'
+  }
+
+  // Send notifications
+  slackSend (color: colorCode, message: summary, channel:'general')
+}
+
+
